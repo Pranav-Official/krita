@@ -167,30 +167,7 @@ void KisToolInvocationAction::begin(int shortcut, QEvent *event)
                 KisToolProxy::BEGIN, KisTool::Primary, event, event);
     }
     else if (shortcut == ConfirmShortcut) {
-        QKeyEvent pressEvent(QEvent::KeyPress, Qt::Key_Return, QFlags<Qt::KeyboardModifier>());
-        inputManager()->toolProxy()->keyPressEvent(&pressEvent);
-        QKeyEvent releaseEvent(QEvent::KeyRelease, Qt::Key_Return, QFlags<Qt::KeyboardModifier>());
-        inputManager()->toolProxy()->keyReleaseEvent(&releaseEvent);
-
-        /**
-         * All the tools now have a KisTool::requestStrokeEnd() method,
-         * so they should use this instead of direct filtering Enter key
-         * press. Until all the tools support it, we just duplicate the
-         * key event and the method call
-         */
-        inputManager()->canvas()->image()->requestStrokeEnd();
-
-        /**
-         * Some tools would like to distinguish automated requestStrokeEnd()
-         * calls from explicit user actions. Just let them do it!
-         *
-         * Please note that this call should happen **after**
-         * requestStrokeEnd(). Some of the tools will switch to another
-         * tool on this request, and this (next) tool does not expect to
-         * get requestStrokeEnd() right after switching in.
-         */
-        inputManager()->toolProxy()->explicitUserStrokeEndRequest();
-
+        confirm(inputManager()->canvas());
     } else if (shortcut == CancelShortcut) {
         /**
          * The tools now have a KisTool::requestStrokeCancellation() method,
@@ -199,6 +176,19 @@ void KisToolInvocationAction::begin(int shortcut, QEvent *event)
 
         inputManager()->canvas()->image()->requestStrokeCancellation();
     }
+}
+
+void KisToolInvocationAction::confirm(KisCanvas2 *canvas)
+{
+    // Older tools handle Enter. Others finish the image stroke and some
+    // switch tools in response to the explicit request, which must come last.
+    auto *proxy = canvas->toolProxy();
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    proxy->keyPressEvent(&press);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+    proxy->keyReleaseEvent(&release);
+    canvas->image()->requestStrokeEnd();
+    proxy->explicitUserStrokeEndRequest();
 }
 
 void KisToolInvocationAction::end(QEvent *event)

@@ -9,6 +9,8 @@
 
 #include "kis_abstract_input_action.h"
 
+class KisCanvas2;
+
 /**
  * \brief Tool Invocation action of KisAbstractInputAction.
  *
@@ -45,6 +47,7 @@ public:
     int priority() const override;
     bool canIgnoreModifiers() const override;
 
+    static void confirm(KisCanvas2 *canvas);
     void begin(int shortcut, QEvent *event) override;
     void end(QEvent *event) override;
     void inputEvent(QEvent* event) override;

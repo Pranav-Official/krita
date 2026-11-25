@@ -467,6 +467,11 @@ set(kritaui_LIB_SRCS
     thememanager.cpp
 
     kis_mainwindow_observer.cpp
+    KisTouchStudio.cpp
+    KisTouchStudioContext.cpp
+    KisTouchStudioDockers.cpp
+    KisTouchStudioPanels.cpp
+    KisTouchStudioAnimation.cpp
     KisViewManager.cpp
     kis_mirror_manager.cpp
 

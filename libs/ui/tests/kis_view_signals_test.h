@@ -23,6 +23,7 @@ private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
 
+    void testTabletModeRoundTrip();
     void testCurrentToolChanged();
     void testCurrentBrushPresetChanged();
     void testForegroundColorChanged();

@@ -157,6 +157,7 @@ public:
      */
     QWidget *canvasWindow() const;
     bool canvasDetached() const;
+    void setTabletCanvasExpanded(bool expanded);
 
     /**
      * Shows if the main window is saving anything right now. If the

@@ -15,6 +15,10 @@
 
 
 #include "KisViewManager.h"
+#include "KisTouchStudio.h"
+#ifdef Q_OS_ANDROID
+#include <KisAndroidUtils.h>
+#endif
 #include <QPrinter>
 
 #include <QAction>
@@ -274,7 +278,14 @@ public:
     };
     std::optional<CanvasOnlyOptions> canvasOnlyOptions;
     QPoint canvasOnlyOffsetCompensation;
+    bool canvasOffsetReady{false};
     bool inCanvasOnlyMode{false};
+    bool tabletMode{false};
+    bool tabletEnteredFullscreen{false};
+    bool tabletHadDockers{false};
+    unsigned canvasModeGeneration{0};
+    QPointer<KisTouchStudio> touchStudio;
+    KisAction *tabletAction{nullptr};
 
     bool blockUntilOperationsFinishedImpl(KisImageSP image, bool force);
 };
@@ -372,6 +383,7 @@ KisViewManager::~KisViewManager()
 
     cfg.writeEntry("baseLength", KisResourceItemChooserSync::instance()->baseLength());
     cfg.writeEntry("CanvasOnlyActive", false); // We never restart in CanvasOnlyMode
+    delete d->touchStudio;
     delete d;
 }
 
@@ -447,6 +459,27 @@ void KisViewManager::slotViewRemoved(KisView *view)
 
 void KisViewManager::setCurrentView(KisView *view)
 {
+    const bool switchTabletDocument = d->tabletMode && view && view != d->currentImageView;
+    if (d->tabletMode && !view) {
+        switchCanvasOnly(false);
+    } else if (switchTabletDocument) {
+        // The shell belongs to the view's canvas surface. Release any mounted
+        // docker before Krita switches its observed canvas to the new view.
+        delete d->touchStudio;
+        ++d->canvasModeGeneration;
+        if (d->currentImageView) {
+            auto *controller = d->currentImageView->canvasController();
+            if (d->canvasOffsetReady) {
+                controller->pan(-d->canvasOnlyOffsetCompensation);
+            }
+            const auto policy = KisConfig(true).hideScrollbars() ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAlwaysOn;
+            controller->setHorizontalScrollBarPolicy(policy);
+            controller->setVerticalScrollBarPolicy(policy);
+            d->currentImageView->zoomManager()->setShowRulers(d->showRulersAction->isChecked());
+        }
+        d->canvasOffsetReady = false;
+    }
+
     if (d->currentImageView) {
         d->currentImageView->notifyCurrentStateChanged(false);
 
@@ -545,9 +578,11 @@ void KisViewManager::setCurrentView(KisView *view)
 
         d->viewConnections.addUniqueConnection(d->showPixelGrid, SIGNAL(toggled(bool)), canvasController, SLOT(slotTogglePixelGrid(bool)));
 
-        imageView->zoomManager()->setShowRulers(d->showRulersAction->isChecked());
+        imageView->zoomManager()->setShowRulers(!d->tabletMode && d->showRulersAction->isChecked());
         imageView->zoomManager()->setRulersTrackMouse(d->rulersTrackMouseAction->isChecked());
 
+        d->viewConnections.addUniqueConnection(imageView->canvasBase(), &KisCanvas2::sigCanvasEngineChanged,
+                                               this, &KisViewManager::refreshTabletSurface);
         showHideScrollbars();
     }
 
@@ -596,6 +631,10 @@ void KisViewManager::setCurrentView(KisView *view)
     canvasResourceProvider()->slotImageSizeChanged();
     canvasResourceProvider()->slotOnScreenResolutionChanged();
 
+    if (switchTabletDocument && d->tabletMode) {
+        mainWindow()->setTabletCanvasExpanded(true);
+        refreshTabletSurface();
+    }
     Q_EMIT viewChanged();
 }
 
@@ -783,6 +822,10 @@ void KisViewManager::createActions()
     tAction->setChecked(false);
     tAction->setAutoRepeat(false);
     connect(tAction, SIGNAL(toggled(bool)), this, SLOT(switchCanvasOnly(bool)));
+
+    d->tabletAction = actionManager()->createAction("view_tablet_mode");
+    d->tabletAction->setAutoRepeat(false);
+    connect(d->tabletAction, &QAction::toggled, this, &KisViewManager::switchTabletMode);
 
     //Workaround, by default has the same shortcut as mirrorCanvas
     KisAction *a = dynamic_cast<KisAction*>(actionCollection()->action("format_italic"));
@@ -1217,6 +1260,45 @@ void KisViewManager::notifyWorkspaceLoaded()
     d->canvasOnlyOptions = std::nullopt;
 }
 
+void KisViewManager::refreshTabletSurface()
+{
+    if (d->tabletMode && d->currentImageView && canvasBase()) {
+        delete d->touchStudio;
+        d->touchStudio = new KisTouchStudio(this, d->currentImageView, d->tabletAction);
+    }
+}
+
+void KisViewManager::switchTabletMode(bool enabled)
+{
+    if (enabled && d->currentImageView && mainWindow()) {
+        if (mainWindow()->canvasDetached()) {
+            showFloatingMessage(i18n("Reattach the canvas to enter Tablet Mode."), QIcon(), 2000,
+                                KisFloatingMessage::Medium);
+        } else {
+            // Canvas-only and tablet mode share one saved desktop layout.
+            if (d->inCanvasOnlyMode) {
+                switchCanvasOnly(false);
+            }
+            if (!d->inCanvasOnlyMode) {
+                d->tabletMode = true;
+                switchCanvasOnly(true);
+                d->tabletMode = d->inCanvasOnlyMode;
+                if (d->tabletMode) {
+                    mainWindow()->setTabletCanvasExpanded(true);
+                    d->currentImageView->zoomManager()->setShowRulers(false);
+                    refreshTabletSurface();
+                }
+            }
+        }
+    } else if (d->tabletMode) {
+        switchCanvasOnly(false);
+    }
+
+    // An expanded Android toolbar can defer a canvas-only transition.
+    QSignalBlocker block(d->tabletAction);
+    d->tabletAction->setChecked(d->tabletMode);
+}
+
 void KisViewManager::switchCanvasOnly(bool toggled)
 {
     if (toggled == d->inCanvasOnlyMode) {
@@ -1258,25 +1340,53 @@ void KisViewManager::switchCanvasOnly(bool toggled)
     }
 #endif
 
+    const unsigned generation = ++d->canvasModeGeneration;
+    const bool tablet = d->tabletMode;
+    if (tablet && !toggled) {
+        delete d->touchStudio;
+        d->tabletMode = false;
+        main->setTabletCanvasExpanded(false);
+        if (d->currentImageView) {
+            d->currentImageView->zoomManager()->setShowRulers(d->showRulersAction->isChecked());
+        }
+        QSignalBlocker block(d->tabletAction);
+        d->tabletAction->setChecked(false);
+    }
     cfg.writeEntry("CanvasOnlyActive", toggled);
     d->inCanvasOnlyMode = toggled;
     updateCanvasOnlyActionState();
 
     KisViewManagerPrivate::CanvasOnlyOptions options(cfg);
 
+    if (tablet) {
+        options.hideTitlebarFullscreen = true;
+        options.hideDockersFullscreen = true;
+        options.hideToolbarFullscreen = true;
+        options.hideMenuFullscreen = true;
+        options.hideStatusbarFullscreen = true;
+        if (toggled) {
+#ifdef Q_OS_ANDROID
+            d->tabletEnteredFullscreen = !KisAndroidUtils::isInFullScreen();
+#else
+            d->tabletEnteredFullscreen = !main->isFullScreen();
+#endif
+        }
+    }
+
     if (toggled) {
         d->canvasStateInNormalMode = qtMainWindow()->saveState();
-    } else {
+    } else if (!tablet) {
         d->canvasStateInCanvasOnlyMode = qtMainWindow()->saveState();
         d->canvasOnlyOptions = options;
     }
 
-    const bool toggleFullscreen = (options.hideTitlebarFullscreen && !cfg.fullscreenMode());
+    const bool toggleFullscreen = tablet ? d->tabletEnteredFullscreen : (options.hideTitlebarFullscreen && !cfg.fullscreenMode());
     const bool useCanvasOffsetCompensation = d->currentImageView &&
                                              d->currentImageView->canvasController() &&
                                              d->currentImageView->isMaximized() &&
                                              !main->canvasDetached();
 
+    if (toggled) d->canvasOffsetReady = false;
     if (useCanvasOffsetCompensation) {
         // The offset is calculated in two steps; this is the first step.
         if (toggled) {
@@ -1315,7 +1425,7 @@ void KisViewManager::switchCanvasOnly(bool toggled)
                 origin = main->geometry().topLeft() - main->screen()->geometry().topLeft();
             }
             d->canvasOnlyOffsetCompensation = d->currentImageView->mapTo(main, origin);
-        } else {
+        } else if (d->canvasOffsetReady) {
             // Restore the original canvas position. The result is more stable if we pan before showing the UI elements.
             d->currentImageView->canvasController()->pan(- d->canvasOnlyOffsetCompensation);
         }
@@ -1341,7 +1451,10 @@ void KisViewManager::switchCanvasOnly(bool toggled)
         KisAction* action = qobject_cast<KisAction*>(main->actionCollection()->action("view_toggledockers"));
         if (action) {
             action->setCheckable(true);
-            if (toggled) {
+            if (tablet) {
+                if (toggled) d->tabletHadDockers = action->isChecked();
+                action->setChecked(!toggled && d->tabletHadDockers);
+            } else if (toggled) {
                 if (action->isChecked()) {
                     cfg.setShowDockers(action->isChecked());
                     action->setChecked(false);
@@ -1357,7 +1470,12 @@ void KisViewManager::switchCanvasOnly(bool toggled)
     // QT in windows does not return to maximized upon 4th tab in a row
     // https://bugreports.qt.io/browse/QTBUG-57882, https://bugreports.qt.io/browse/QTBUG-52555, https://codereview.qt-project.org/#/c/185016/
     if (toggleFullscreen) {
-        if(toggled) {
+#ifdef Q_OS_ANDROID
+        if (tablet) {
+            KisAndroidUtils::setFullScreen(toggled);
+        } else
+#endif
+        if (toggled) {
             main->setWindowState( main->windowState() | Qt::WindowFullScreen);
         } else {
             main->setWindowState( main->windowState() & ~Qt::WindowFullScreen);
@@ -1401,7 +1519,7 @@ void KisViewManager::switchCanvasOnly(bool toggled)
     showHideScrollbars();
 
     if (toggled) {
-        if (!d->canvasStateInCanvasOnlyMode.isEmpty() &&
+        if (!tablet && !d->canvasStateInCanvasOnlyMode.isEmpty() &&
             d->canvasOnlyOptions &&
             *d->canvasOnlyOptions == options) {
 
@@ -1414,16 +1532,17 @@ void KisViewManager::switchCanvasOnly(bool toggled)
              *
              * See https://bugs.kde.org/show_bug.cgi?id=475973
              */
-            QTimer::singleShot(0, this, [this] () {
+            QTimer::singleShot(0, this, [this, generation] () {
+                if (generation != d->canvasModeGeneration) return;
                 this->mainWindow()->restoreState(d->canvasStateInCanvasOnlyMode);
             });
         }
 
-               // show a fading heads-up display about the shortcut to go back
-        showFloatingMessage(i18n("Going into Canvas-Only mode.\nPress %1 to go back.",
-                                 actionCollection()->action("view_show_canvas_only")->shortcut().toString(QKeySequence::NativeText)), QIcon(),
-                            2000,
-                            KisFloatingMessage::Low);
+        if (!tablet) {
+            showFloatingMessage(i18n("Going into Canvas-Only mode.\nPress %1 to go back.",
+                                     actionCollection()->action("view_show_canvas_only")->shortcut().toString(QKeySequence::NativeText)),
+                                QIcon(), 2000, KisFloatingMessage::Low);
+        }
     }
     else {
         if (!d->canvasStateInNormalMode.isEmpty()) {
@@ -1440,10 +1559,12 @@ void KisViewManager::switchCanvasOnly(bool toggled)
 
         if (allowedZoomMode) {
             // Defer the pan action until the layout is fully settled in (including the menu bars, etc.).
-            QTimer::singleShot(0, this, [this] () {
+            QTimer::singleShot(0, this, [this, generation] () {
+                if (generation != d->canvasModeGeneration || !d->currentImageView) return;
                 // Compensate by the difference of (after - before) layout.
                 d->canvasOnlyOffsetCompensation = d->currentImageView->mapTo(this->mainWindow(), QPoint()) - d->canvasOnlyOffsetCompensation;
                 d->currentImageView->canvasController()->pan(d->canvasOnlyOffsetCompensation);
+                d->canvasOffsetReady = true;
             });
         } else {
             // Nothing to restore.
@@ -1629,7 +1750,7 @@ void KisViewManager::showHideScrollbars()
     KisConfig cfg(true);
     bool toggled = actionCollection()->action("view_show_canvas_only")->isChecked();
 
-    if ( (toggled && cfg.hideScrollbarsFullscreen()) || (!toggled && cfg.hideScrollbars()) ) {
+    if (d->tabletMode || (toggled && cfg.hideScrollbarsFullscreen()) || (!toggled && cfg.hideScrollbars()) ) {
         d->currentImageView->canvasController()->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         d->currentImageView->canvasController()->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     } else {
