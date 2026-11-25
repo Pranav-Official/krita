@@ -276,6 +276,9 @@ public:
     KisAction *toggleDetachCanvas {nullptr};
     KisAction *newWindow {nullptr};
 #endif
+    QPointer<QMdiSubWindow> tabletMaximizedWindow;
+    QPointer<QTabBar> tabletHiddenTabBar;
+    QString tabletSavedTabStyle;
     KisAction *fullScreenMode {nullptr};
     KisAction *showSessionManager {nullptr};
     KisAction *commandBarAction {nullptr};
@@ -1102,6 +1105,37 @@ bool KisMainWindow::canvasDetached() const
     return centralWidget() != d->widgetStack;
 }
 
+void KisMainWindow::setTabletCanvasExpanded(bool expanded)
+{
+    if (expanded) {
+        if (auto *bar = d->findTabBarHACK(); bar && bar->isVisible()) {
+            d->tabletHiddenTabBar = bar;
+            d->tabletSavedTabStyle = bar->styleSheet();
+            // QMdiArea reserves the tab bar's sizeHint even while it is hidden.
+            bar->setStyleSheet(QStringLiteral("QTabBar::tab { width: 0px; height: 0px; min-width: 0px; min-height: 0px;"
+                                              " max-width: 0px; max-height: 0px; padding: 0px; border: 0px; margin: 0px; }"));
+            bar->hide();
+        }
+        auto *window = d->mdiArea->activeSubWindow();
+        if (window && !window->isMaximized()) {
+            d->tabletMaximizedWindow = window;
+            window->showMaximized();
+        }
+    } else {
+        if (d->tabletMaximizedWindow) d->tabletMaximizedWindow->showNormal();
+        if (d->tabletHiddenTabBar) {
+            d->tabletHiddenTabBar->setStyleSheet(d->tabletSavedTabStyle);
+            d->tabletHiddenTabBar->show();
+        }
+        d->tabletMaximizedWindow.clear();
+        d->tabletHiddenTabBar.clear();
+    }
+    // Recalculate the viewport margin even if the window was already fullscreen.
+    auto *viewport = d->mdiArea->viewport();
+    QResizeEvent resize(viewport->size(), viewport->size());
+    QApplication::sendEvent(viewport, &resize);
+}
+
 void KisMainWindow::setCanvasDetached(bool detach)
 {
 #ifdef Q_OS_ANDROID
@@ -1111,6 +1145,10 @@ void KisMainWindow::setCanvasDetached(bool detach)
     }
 #else
     if (detach == canvasDetached()) return;
+
+    if (auto *tablet = d->viewManager->actionCollection()->action("view_tablet_mode")) {
+        tablet->setChecked(false);
+    }
 
     QWidget *outgoingWidget = centralWidget() ? takeCentralWidget() : nullptr;
     QWidget *incomingWidget = d->canvasWindow->swapMainWidget(outgoingWidget);

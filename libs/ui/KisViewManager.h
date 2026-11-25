@@ -270,6 +270,8 @@ private:
 
     void handleFloatingZoomRotationMessage(QString &messageToClear);
 
+    void refreshTabletSurface();
+    void switchTabletMode(bool enabled);
     void updateCanvasOnlyActionState();
 
 private:

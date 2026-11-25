@@ -611,6 +611,15 @@
 
   <Actions category="View">
     <text>View</text>
+    <Action name="view_tablet_mode">
+      <icon>config-tablet</icon>
+      <text>Tablet Mode</text>
+      <toolTip>Draw full screen with touch controls</toolTip>
+      <iconText>Tablet Mode</iconText>
+      <activationFlags>1</activationFlags>
+      <activationConditions>0</activationConditions>
+      <isCheckable>true</isCheckable>
+    </Action>
     <Action name="view_show_canvas_only">
       <icon>document-new</icon>
       <text>&amp;Show Canvas Only</text>

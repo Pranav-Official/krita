@@ -8,6 +8,15 @@ Note: Nightly builds are not covered by this table atm
 
 Krita is a free and open source digital painting application. It is for artists who want to create professional work from start to end. Krita is used by comic book artists, illustrators, concept artists, matte and texture painters and in the digital VFX industry.
 
+### Tablet Mode in this fork
+
+Open a document and tap the **Tablet Mode** button in the File toolbar, or choose **View → Tablet Mode**. The canvas fills the window and floating controls appear around its edges.
+
+- Choose a drawing tool from the tool rail. Drag **Size** or **Opacity** to adjust the active brush.
+- Tap **Brush Presets**, the foreground color swatch, or **Layers** in the top bar to open a panel. Tap the same button again to close it.
+- Open **Animation Timeline** to scrub the active layer’s frames, preview playback, or add a blank frame. The frame options menu contains **Duplicate Keyframe** and **Remove Keyframe**.
+- Tap **Exit Tablet Mode** or press **Tab** to restore the desktop workspace.
+
 If you are reading this on GitHub, be aware that this is just a mirror. Our real code repository is provided by KDE: https://invent.kde.org/graphics/krita.git
 
 ![Picture](https://krita.org/images/hero-image-50.webp)
