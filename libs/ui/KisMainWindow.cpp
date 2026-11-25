@@ -276,7 +276,7 @@ public:
     KisAction *toggleDetachCanvas {nullptr};
     KisAction *newWindow {nullptr};
 #endif
-    QPointer<QMdiSubWindow> tabletMaximizedWindow;
+    QList<QPointer<QMdiSubWindow>> tabletMaximizedWindows;
     QPointer<QTabBar> tabletHiddenTabBar;
     QString tabletSavedTabStyle;
     KisAction *fullScreenMode {nullptr};
@@ -1118,16 +1118,24 @@ void KisMainWindow::setTabletCanvasExpanded(bool expanded)
         }
         auto *window = d->mdiArea->activeSubWindow();
         if (window && !window->isMaximized()) {
-            d->tabletMaximizedWindow = window;
+            if (!d->tabletMaximizedWindows.contains(window)) {
+                d->tabletMaximizedWindows.append(window);
+            }
             window->showMaximized();
         }
     } else {
-        if (d->tabletMaximizedWindow) d->tabletMaximizedWindow->showNormal();
+        const QPointer<QMdiSubWindow> active = d->mdiArea->activeSubWindow();
+        for (const auto &window : std::as_const(d->tabletMaximizedWindows)) {
+            if (window) window->showNormal();
+        }
+        if (active && d->mdiArea->activeSubWindow() != active) {
+            d->mdiArea->setActiveSubWindow(active);
+        }
         if (d->tabletHiddenTabBar) {
             d->tabletHiddenTabBar->setStyleSheet(d->tabletSavedTabStyle);
             d->tabletHiddenTabBar->show();
         }
-        d->tabletMaximizedWindow.clear();
+        d->tabletMaximizedWindows.clear();
         d->tabletHiddenTabBar.clear();
     }
     // Recalculate the viewport margin even if the window was already fullscreen.

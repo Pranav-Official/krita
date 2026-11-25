@@ -6,11 +6,17 @@
 
 #include "kis_view_signals_test.h"
 
+#include <algorithm>
+
 #include <QApplication>
 #include <QScopedPointer>
 #include <QSignalSpy>
 #include <QTimer>
 #include <QMenuBar>
+#include <QMdiArea>
+#include <QMdiSubWindow>
+#include <QToolButton>
+#include <QDockWidget>
 #include <QToolBar>
 #include <kis_canvas_resource_provider.h>
 #include <kis_action.h>
@@ -112,6 +118,9 @@ void KisViewSignalsTest::testTabletModeRoundTrip()
     auto *toolbar = m_mainWindow->findChild<QToolBar *>("mainToolBar");
     QVERIFY(toolbar);
     const bool toolbarVisible = toolbar->isVisible();
+    auto *options = m_mainWindow->dockWidget(QStringLiteral("sharedtooldocker"));
+    const bool optionsVisible = options && options->isVisible();
+    const auto optionsArea = options ? m_mainWindow->dockWidgetArea(options) : Qt::NoDockWidgetArea;
 
     // Both the tablet button and the existing canvas-only shortcut must exit
     // the mode and restore the user's original window state.
@@ -125,6 +134,33 @@ void KisViewSignalsTest::testTabletModeRoundTrip()
         QVERIFY(!toolbar->isVisible());
         QVERIFY(m_kisView->findChild<QWidget *>("touchStudioBar"));
 
+        if (exitAction == tablet && options) {
+            auto *bar = m_kisView->findChild<QWidget *>("touchStudioBar");
+            const auto buttons = bar->findChildren<QToolButton *>();
+            const auto found = std::find_if(buttons.cbegin(), buttons.cend(), [](QToolButton *b) {
+                return b->accessibleName() == QStringLiteral("Tool Options");
+            });
+            QVERIFY(found != buttons.cend());
+            (*found)->click();
+            QVERIFY(m_kisView->isAncestorOf(options));
+            QVERIFY(options->isVisible());
+        } else if (exitAction == canvasOnly) {
+            // Switching documents migrates the controls to the active canvas.
+            auto *second = m_mainWindow->newView(m_document);
+            QVERIFY(second);
+            QApplication::processEvents();
+            QVERIFY(tablet->isChecked());
+            QVERIFY(second->findChild<QWidget *>("touchStudioBar"));
+            QVERIFY(!m_kisView->findChild<QWidget *>("touchStudioBar"));
+            auto *firstWindow = qobject_cast<QMdiSubWindow *>(m_kisView->parentWidget());
+            QVERIFY(firstWindow && firstWindow->mdiArea());
+            firstWindow->mdiArea()->setActiveSubWindow(firstWindow);
+            QApplication::processEvents();
+            QVERIFY(m_kisView->findChild<QWidget *>("touchStudioBar"));
+            second->closeView();
+            QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+
         exitAction->setChecked(false);
         QApplication::processEvents();
         QVERIFY(!tablet->isChecked());
@@ -133,6 +169,11 @@ void KisViewSignalsTest::testTabletModeRoundTrip()
         QCOMPARE(m_mainWindow->isFullScreen(), fullscreen);
         QCOMPARE(m_mainWindow->menuBar()->isVisible(), menuVisible);
         QCOMPARE(toolbar->isVisible(), toolbarVisible);
+        if (options) {
+            QCOMPARE(options->parentWidget(), static_cast<QWidget *>(m_mainWindow));
+            QCOMPARE(options->isVisible(), optionsVisible);
+            QCOMPARE(m_mainWindow->dockWidgetArea(options), optionsArea);
+        }
     }
     m_mainWindow->hide();
 }

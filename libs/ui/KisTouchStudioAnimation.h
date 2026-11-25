@@ -10,8 +10,9 @@
 #include <QVector>
 
 class QAction;
-class QLabel;
 class QListView;
+class QMenu;
+class QResizeEvent;
 class QToolButton;
 class KisCanvasAnimationState;
 class KisTouchStudioFrameModel;
@@ -25,6 +26,7 @@ public:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     enum class FrameEdit { Add, Duplicate, Remove };
@@ -34,19 +36,27 @@ private:
     void refreshCurrentFrame();
     void seek(int frame, bool finalize = true);
     void editFrame(FrameEdit edit);
+    void populateTracks();
+    void editPlaybackSettings();
+    void toggleOnionSkin();
+    void updateTrackLabel();
 
     KisViewManager *m_viewManager;
     QPointer<KisCanvasAnimationState> m_state;
     QVector<QMetaObject::Connection> m_canvasConnections;
     KisTouchStudioFrameModel *m_frames;
     QListView *m_timeline;
+    QToolButton *m_previous;
     QToolButton *m_play;
+    QToolButton *m_next;
+    QToolButton *m_track;
+    QToolButton *m_onion;
     QToolButton *m_add;
     QToolButton *m_options;
+    QMenu *m_tracks;
     QAction *m_duplicate;
     QAction *m_remove;
-    QLabel *m_frameNumber;
-    QLabel *m_frameRate;
+    QAction *m_playbackSettings;
     bool m_scrubbing = false;
 };
 

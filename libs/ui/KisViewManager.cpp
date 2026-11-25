@@ -459,8 +459,25 @@ void KisViewManager::slotViewRemoved(KisView *view)
 
 void KisViewManager::setCurrentView(KisView *view)
 {
-    if (d->tabletMode && view != d->currentImageView) {
+    const bool switchTabletDocument = d->tabletMode && view && view != d->currentImageView;
+    if (d->tabletMode && !view) {
         switchCanvasOnly(false);
+    } else if (switchTabletDocument) {
+        // The shell belongs to the view's canvas surface. Release any mounted
+        // docker before Krita switches its observed canvas to the new view.
+        delete d->touchStudio;
+        ++d->canvasModeGeneration;
+        if (d->currentImageView) {
+            auto *controller = d->currentImageView->canvasController();
+            if (d->canvasOffsetReady) {
+                controller->pan(-d->canvasOnlyOffsetCompensation);
+            }
+            const auto policy = KisConfig(true).hideScrollbars() ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAlwaysOn;
+            controller->setHorizontalScrollBarPolicy(policy);
+            controller->setVerticalScrollBarPolicy(policy);
+            d->currentImageView->zoomManager()->setShowRulers(d->showRulersAction->isChecked());
+        }
+        d->canvasOffsetReady = false;
     }
 
     if (d->currentImageView) {
@@ -561,7 +578,7 @@ void KisViewManager::setCurrentView(KisView *view)
 
         d->viewConnections.addUniqueConnection(d->showPixelGrid, SIGNAL(toggled(bool)), canvasController, SLOT(slotTogglePixelGrid(bool)));
 
-        imageView->zoomManager()->setShowRulers(d->showRulersAction->isChecked());
+        imageView->zoomManager()->setShowRulers(!d->tabletMode && d->showRulersAction->isChecked());
         imageView->zoomManager()->setRulersTrackMouse(d->rulersTrackMouseAction->isChecked());
 
         d->viewConnections.addUniqueConnection(imageView->canvasBase(), &KisCanvas2::sigCanvasEngineChanged,
@@ -614,6 +631,10 @@ void KisViewManager::setCurrentView(KisView *view)
     canvasResourceProvider()->slotImageSizeChanged();
     canvasResourceProvider()->slotOnScreenResolutionChanged();
 
+    if (switchTabletDocument && d->tabletMode) {
+        mainWindow()->setTabletCanvasExpanded(true);
+        refreshTabletSurface();
+    }
     Q_EMIT viewChanged();
 }
 

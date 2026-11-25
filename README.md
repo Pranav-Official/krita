@@ -10,12 +10,17 @@ Krita is a free and open source digital painting application. It is for artists 
 
 ### Tablet Mode in this fork
 
-Open a document and tap the **Tablet Mode** button in the File toolbar, or choose **View → Tablet Mode**. The canvas fills the window and floating controls appear around its edges.
+Open a document and tap **Tablet Mode** in the File toolbar, or choose **View → Tablet Mode**. Tap **Done** to return to your desktop layout. The document button in the top bar lets you switch between open canvases while staying in Tablet Mode.
 
-- Choose a drawing tool from the tool rail. Drag **Size** or **Opacity** to adjust the active brush.
-- Tap **Brush Presets**, the foreground color swatch, or **Layers** in the top bar to open a panel. Tap the same button again to close it.
-- Open **Animation Timeline** to scrub the active layer’s frames, preview playback, or add a blank frame. The frame options menu contains **Duplicate Keyframe** and **Remove Keyframe**.
-- Tap **Exit Tablet Mode** or press **Tab** to restore the desktop workspace.
+![Krita's fullscreen tablet workspace with brush categories and stroke previews over the canvas](.github/screenshots/tablet-brush-library.webp)
+
+[Color panel](.github/screenshots/tablet-color.webp) · [Portrait animation filmstrip](.github/screenshots/tablet-animation.webp). Canvas artwork by Tyson Tan, from Krita’s bundled splash illustrations.
+
+- **Paint.** The left rail puts brush size, opacity, undo and redo under your thumb. Open **Brush Presets** to browse brushstroke previews, search by name, or filter by tag. Its **Settings** tab has flow, blend mode and smoothing controls, plus a shortcut to the full Brush Editor.
+- **Choose colors and manage layers.** Tap the foreground swatch for the color selector, RGB channels, hex entry and recent colors. Grayscale documents show a value ramp and neutral swatches. Open **Layers** to select a layer by thumbnail, adjust its opacity and blend mode, or group, reorder and merge layers.
+- **Illustrate and edit.** **Tools** and **Actions** let you search the tools and commands registered in your Krita installation. The bottom bar changes with the active tool, putting transform modes, crop ratios, selection operations or move controls within reach. **Tool Options** opens the active tool’s full settings.
+- **Animate.** Open **Animation Timeline** to choose a layer, scrub frames, toggle onion skins, add a keyframe and play the sequence. The filmstrip’s options menu includes duplicate and remove, frame rate and playback range.
+- **Open a docker.** **Studio Panels** gives you searchable access to installed dockers, including plugin panels. Tap the same toolbar button again to close a panel and uncover the canvas.
 
 If you are reading this on GitHub, be aware that this is just a mirror. Our real code repository is provided by KDE: https://invent.kde.org/graphics/krita.git
 

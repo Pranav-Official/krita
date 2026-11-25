@@ -25,7 +25,12 @@ protected:
 
 private:
     void layoutOverlays();
+    void setPanel(const QString &id);
+    void showCommands(const QString &page);
+    void collectCommands();
+    void populateCommands();
     void updateTools();
+    void updateToolIcons(bool erasing);
     void bindCanvasResources();
     void updateBrushControls();
 

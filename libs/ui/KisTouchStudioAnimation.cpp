@@ -7,17 +7,22 @@
 #include <QAbstractListModel>
 #include <QAction>
 #include <QCache>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
-#include <QLabel>
 #include <QListView>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QStyledItemDelegate>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <KLocalizedString>
 
@@ -30,6 +35,8 @@
 #include <kis_command_utils.h>
 #include <kis_image.h>
 #include <kis_image_animation_interface.h>
+#include <commands_new/KisImageAnimSettingCommand.h>
+#include <kis_layer_properties_icons.h>
 #include <kis_node.h>
 #include <kis_node_manager.h>
 #include <kis_paint_device.h>
@@ -44,16 +51,33 @@ namespace
 {
 enum FrameRole { KeyframeRole = Qt::UserRole, InPlaybackRangeRole };
 
+QIcon stripIcon(const QString &name)
+{
+    return QIcon(QStringLiteral(":/light_%1.svg").arg(name));
+}
+
+const char popupStyle[] = R"(
+    QMenu { background: #25262a; color: #f3f4f6; border: 1px solid #43444a; padding: 4px; }
+    QMenu::item { padding: 11px 18px 11px 24px; }
+    QMenu::item:selected { background: #34465e; }
+    QMenu::item:disabled { color: #9799a0; }
+    QMenu::separator { height: 1px; background: #42434a; margin: 4px 8px; }
+)";
+
 KisKeyframeChannel *rasterChannel(const KisNodeSP &node)
 {
     return node ? node->getKeyframeChannel(KisKeyframeChannel::Raster.id()) : nullptr;
 }
 
+bool supportsRasterFrames(const KisNodeSP &node)
+{
+    return node && (node->inherits("KisPaintLayer") || node->inherits("KisFilterMask") ||
+                    node->inherits("KisTransparencyMask") || node->inherits("KisSelectionBasedLayer"));
+}
+
 bool canEditFrames(const KisNodeSP &node)
 {
-    return node && node->visible() && !node->userLocked() &&
-        (node->inherits("KisPaintLayer") || node->inherits("KisFilterMask") ||
-         node->inherits("KisTransparencyMask") || node->inherits("KisSelectionBasedLayer"));
+    return supportsRasterFrames(node) && node->isEditable();
 }
 
 class FrameDelegate : public QStyledItemDelegate
@@ -63,46 +87,73 @@ public:
 
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override
     {
-        return QSize(57, 44);
+        return QSize(74, 60);
     }
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
     {
         const bool selected = option.state & QStyle::State_Selected;
+        const bool focused = option.state & QStyle::State_HasFocus;
         const bool keyframe = index.data(KeyframeRole).toBool();
         const bool inRange = index.data(InPlaybackRangeRole).toBool();
-        const QRect cell = option.rect.adjusted(1, 1, -3, -1);
+        const QRect cell = option.rect;
+        const QRect ruler = cell.adjusted(0, cell.height() - 18, 0, 0);
+        const QColor accent("#87b9fa");
 
         painter->save();
-        painter->setRenderHint(QPainter::Antialiasing);
-        painter->setPen(selected ? QColor("#5bafff") : QColor("#41454d"));
-        painter->setBrush(selected ? QColor("#26466a") : keyframe ? QColor("#343945") : QColor("#272a31"));
-        painter->drawRoundedRect(cell, 7, 7);
+        painter->setClipRect(cell);
+        painter->fillRect(cell, selected ? QColor("#303e51") : QColor("#222327"));
+        painter->fillRect(ruler, selected ? QColor("#394b63") : QColor("#292a2e"));
+        painter->setPen(QColor("#38393f"));
+        painter->drawLine(cell.topRight(), cell.bottomRight());
+        painter->drawLine(ruler.topLeft(), ruler.topRight());
 
         const QImage preview = index.data(Qt::DecorationRole).value<QImage>();
         if (!preview.isNull()) {
-            const QRect previewArea = cell.adjusted(3, 2, -3, -15);
-            const QPoint topLeft = previewArea.center() - QPoint(preview.width() / 2, preview.height() / 2);
-            painter->drawImage(topLeft, preview);
+            const QRect previewArea = cell.adjusted(5, 2, -5, -19);
+            const QPoint origin = previewArea.center() - QPoint((preview.width() - 1) / 2, (preview.height() - 1) / 2);
+            const QRect thumbnail(origin, preview.size());
+            painter->save();
+            painter->setClipRect(previewArea, Qt::IntersectClip);
+            painter->setClipRect(thumbnail, Qt::IntersectClip);
+            painter->fillRect(thumbnail, QColor("#424348"));
+            constexpr int tile = 6;
+            for (int y = 0; y < thumbnail.height(); y += tile) {
+                for (int x = 0; x < thumbnail.width(); x += tile) {
+                    if ((x / tile + y / tile) % 2 == 0) {
+                        painter->fillRect(thumbnail.x() + x, thumbnail.y() + y, tile, tile, QColor("#53545a"));
+                    }
+                }
+            }
+            painter->drawImage(origin, preview);
+            painter->restore();
         }
 
         if (keyframe) {
-            const QPoint center(cell.left() + 9, cell.top() + 8);
+            const QPoint center(ruler.left() + 10, ruler.center().y());
             QPolygon marker;
             marker << center + QPoint(0, -3) << center + QPoint(3, 0)
                    << center + QPoint(0, 3) << center + QPoint(-3, 0);
             painter->setPen(Qt::NoPen);
-            painter->setBrush(QColor("#74beff"));
+            painter->setBrush(selected ? accent : QColor("#babcc3"));
             painter->drawPolygon(marker);
         }
 
         QFont font = option.font;
-        font.setPixelSize(11);
+        font.setPixelSize(12);
         font.setBold(selected);
         painter->setFont(font);
-        painter->setPen(selected || inRange ? QColor("#edf2fb") : QColor("#a6aab5"));
-        painter->drawText(cell.adjusted(0, 0, 0, -3), Qt::AlignHCenter | Qt::AlignBottom,
-                          index.data(Qt::DisplayRole).toString());
+        painter->setPen(selected ? QColor("#ffffff") : inRange ? QColor("#e2e3e7") : QColor("#a1a2a9"));
+        painter->drawText(ruler, Qt::AlignCenter, index.data(Qt::DisplayRole).toString());
+
+        if (selected) {
+            painter->fillRect(QRect(cell.x(), cell.y(), cell.width() - 1, 2), accent);
+        }
+        if (focused) {
+            painter->setPen(QPen(QColor("#c5deff"), 1, Qt::DashLine));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawRect(cell.adjusted(2, 3, -3, -2));
+        }
         painter->restore();
     }
 };
@@ -137,7 +188,7 @@ public:
         case InPlaybackRangeRole:
             return m_playbackRange.contains(frame);
         case Qt::DecorationRole:
-            return keyframe ? QVariant::fromValue(thumbnail(frame)) : QVariant();
+            return keyframe || (frame == 0 && m_keys.isEmpty()) ? QVariant::fromValue(thumbnail(frame)) : QVariant();
         default:
             return {};
         }
@@ -210,8 +261,10 @@ private:
             if (keyframe && keyframe->hasContent() && m_node->paintDevice()) {
                 KisPaintDeviceSP device = new KisPaintDevice(m_node->paintDevice()->colorSpace());
                 keyframe->writeFrameToDevice(device);
-                preview = device->createThumbnail(44, 24, Qt::KeepAspectRatio);
+                preview = device->createThumbnail(64, 39, Qt::KeepAspectRatio);
             }
+        } else if (m_node && m_node->paintDevice()) {
+            preview = m_node->paintDevice()->createThumbnail(64, 39, Qt::KeepAspectRatio);
         }
         image->unlock();
 
@@ -232,43 +285,54 @@ KisTouchStudioAnimation::KisTouchStudioAnimation(KisViewManager *viewManager, QW
     , m_viewManager(viewManager)
     , m_frames(new KisTouchStudioFrameModel(this))
     , m_timeline(new QListView(this))
+    , m_previous(new QToolButton(this))
     , m_play(new QToolButton(this))
+    , m_next(new QToolButton(this))
+    , m_track(new QToolButton(this))
+    , m_onion(new QToolButton(this))
     , m_add(new QToolButton(this))
     , m_options(new QToolButton(this))
-    , m_frameNumber(new QLabel(this))
-    , m_frameRate(new QLabel(this))
+    , m_tracks(new QMenu(m_track))
 {
     setAttribute(Qt::WA_NoMousePropagation);
     setObjectName("touchStudioAnimation");
     setStyleSheet(QStringLiteral(R"(
         QFrame#touchStudioAnimation {
-            background: #202227;
-            border: 1px solid #41454d;
-            border-radius: 14px;
+            background: #25262a;
+            border: 1px solid #42434a;
+            border-radius: 12px;
         }
-        QFrame#touchStudioAnimation QLabel { color: #c5cbd6; }
+        QFrame#touchStudioAnimation QFrame#touchTransportDivider { background: #42434a; }
         QFrame#touchStudioAnimation QToolButton {
-            color: #eef2fa;
-            background: #313640;
-            border: 1px solid #414651;
-            border-radius: 7px;
-            padding: 3px 10px;
+            color: #f3f4f6;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 5px;
+            padding: 3px 6px;
         }
-        QFrame#touchStudioAnimation QToolButton:hover { background: #404956; }
-        QFrame#touchStudioAnimation QToolButton:pressed { background: #26466a; }
-        QFrame#touchStudioAnimation QToolButton:disabled { color: #80838b; }
+        QFrame#touchStudioAnimation QToolButton:hover { background: #34353b; }
+        QFrame#touchStudioAnimation QToolButton:pressed,
+        QFrame#touchStudioAnimation QToolButton:checked { background: #394b63; }
+        QFrame#touchStudioAnimation QToolButton:focus { border-color: #9bc6fa; }
+        QFrame#touchStudioAnimation QToolButton:disabled { color: #909197; }
         QFrame#touchStudioAnimation QToolButton::menu-indicator { image: none; }
-        QFrame#touchStudioAnimation QListView { background: transparent; border: none; outline: none; }
+        QFrame#touchStudioAnimation QListView {
+            background: #222327;
+            border: none;
+            border-top: 1px solid #3b3c43;
+            outline: none;
+        }
         QFrame#touchStudioAnimation QScrollBar:horizontal {
             height: 9px;
             border: none;
-            background: #202227;
-            margin: 1px 0;
+            background: #25262a;
+            margin: 0;
         }
         QFrame#touchStudioAnimation QScrollBar::handle:horizontal {
-            background: #555e6b;
-            border-radius: 3px;
-            min-width: 25px;
+            background: #5d606a;
+            border-radius: 2px;
+            min-width: 30px;
+            margin: 2px 0;
         }
         QFrame#touchStudioAnimation QScrollBar::add-line:horizontal,
         QFrame#touchStudioAnimation QScrollBar::sub-line:horizontal { width: 0; }
@@ -277,29 +341,60 @@ KisTouchStudioAnimation::KisTouchStudioAnimation(KisViewManager *viewManager, QW
     )"));
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(9, 6, 9, 4);
-    layout->setSpacing(3);
+    layout->setContentsMargins(8, 3, 8, 3);
+    layout->setSpacing(1);
     auto *controls = new QHBoxLayout();
-    controls->setSpacing(7);
+    controls->setSpacing(3);
     layout->addLayout(controls);
 
-    m_play->setMinimumHeight(32);
-    m_add->setMinimumHeight(32);
-    m_options->setMinimumSize(34, 32);
+    const auto configureButton = [](QToolButton *button, const QString &icon, const QString &name) {
+        button->setMinimumSize(38, 36);
+        button->setIconSize(QSize(20, 20));
+        button->setIcon(stripIcon(icon));
+        button->setAccessibleName(name);
+        button->setToolTip(name);
+    };
+    configureButton(m_previous, QStringLiteral("prevkeyframe"), i18n("Previous keyframe"));
+    configureButton(m_play, QStringLiteral("animation_play"), i18n("Play"));
+    configureButton(m_next, QStringLiteral("nextkeyframe"), i18n("Next keyframe"));
+    configureButton(m_track, QStringLiteral("all-layers"), i18n("Active animation layer"));
+    configureButton(m_onion, QStringLiteral("onionOff"), i18n("Onion skin"));
+    configureButton(m_add, QStringLiteral("keyframe-add"), i18n("Add a blank keyframe"));
     m_add->setText(i18n("Add Frame"));
-    m_add->setToolTip(i18n("Add a blank keyframe to the active layer"));
+    m_add->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_options->setMinimumSize(38, 36);
     m_options->setText(QStringLiteral("⋯"));
-    m_options->setAccessibleName(i18n("Frame options"));
-    m_options->setToolTip(i18n("Frame options"));
+    m_options->setAccessibleName(i18n("Animation options"));
+    m_options->setToolTip(i18n("Animation options"));
     m_options->setPopupMode(QToolButton::InstantPopup);
+    m_track->setPopupMode(QToolButton::InstantPopup);
+    m_track->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_track->setMenu(m_tracks);
+    m_onion->setCheckable(true);
+    connect(m_onion, &QToolButton::toggled, this, [this](bool enabled) {
+        m_onion->setIcon(stripIcon(enabled ? QStringLiteral("onionOn") : QStringLiteral("onionOff")));
+    });
+    m_tracks->setStyleSheet(QString::fromLatin1(popupStyle));
+    connect(m_tracks, &QMenu::aboutToShow, this, &KisTouchStudioAnimation::populateTracks);
+
     auto *menu = new QMenu(m_options);
+    menu->setStyleSheet(QString::fromLatin1(popupStyle));
     m_duplicate = menu->addAction(i18n("Duplicate Keyframe"), this, [this] { editFrame(FrameEdit::Duplicate); });
     m_remove = menu->addAction(i18n("Remove Keyframe"), this, [this] { editFrame(FrameEdit::Remove); });
+    menu->addSeparator();
+    m_playbackSettings = menu->addAction(i18n("Playback Settings…"), this, &KisTouchStudioAnimation::editPlaybackSettings);
     m_options->setMenu(menu);
+
+    controls->addWidget(m_previous);
     controls->addWidget(m_play);
-    controls->addWidget(m_frameNumber);
+    controls->addWidget(m_next);
+    auto *transportDivider = new QFrame(this);
+    transportDivider->setObjectName("touchTransportDivider");
+    transportDivider->setFixedSize(1, 19);
+    controls->addWidget(transportDivider);
+    controls->addWidget(m_track);
     controls->addStretch();
-    controls->addWidget(m_frameRate);
+    controls->addWidget(m_onion);
     controls->addWidget(m_add);
     controls->addWidget(m_options);
 
@@ -326,6 +421,9 @@ KisTouchStudioAnimation::KisTouchStudioAnimation(KisViewManager *viewManager, QW
             KisPart::instance()->playbackEngine()->playPause();
         }
     });
+    connect(m_previous, &QToolButton::clicked, this, [] { KisPart::instance()->playbackEngine()->previousKeyframe(); });
+    connect(m_next, &QToolButton::clicked, this, [] { KisPart::instance()->playbackEngine()->nextKeyframe(); });
+    connect(m_onion, &QToolButton::clicked, this, &KisTouchStudioAnimation::toggleOnionSkin);
     connect(m_add, &QToolButton::clicked, this, [this] { editFrame(FrameEdit::Add); });
     connect(m_viewManager, &KisViewManager::viewChanged, this, &KisTouchStudioAnimation::bindCanvas);
     connect(m_viewManager->nodeManager(), &KisNodeManager::sigNodeActivated,
@@ -335,7 +433,7 @@ KisTouchStudioAnimation::KisTouchStudioAnimation(KisViewManager *viewManager, QW
 
 QSize KisTouchStudioAnimation::sizeHint() const
 {
-    return QSize(560, 102);
+    return QSize(760, 114);
 }
 
 bool KisTouchStudioAnimation::eventFilter(QObject *watched, QEvent *event)
@@ -359,6 +457,16 @@ bool KisTouchStudioAnimation::eventFilter(QObject *watched, QEvent *event)
             }
         }
         break;
+    case QEvent::Wheel: {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        if (wheel->angleDelta().x() == 0 && wheel->pixelDelta().x() == 0) {
+            QScrollBar *scrollBar = m_timeline->horizontalScrollBar();
+            const int delta = wheel->pixelDelta().isNull() ? wheel->angleDelta().y() / 2 : wheel->pixelDelta().y();
+            scrollBar->setValue(scrollBar->value() - delta);
+            return true;
+        }
+        break;
+    }
     case QEvent::MouseButtonRelease:
     case QEvent::UngrabMouse:
         if (m_scrubbing) {
@@ -436,10 +544,13 @@ void KisTouchStudioAnimation::refreshCurrentFrame()
         return;
     }
 
-    m_play->setText(playing ? i18n("Pause") : i18n("Play"));
+    const QString playLabel = playing ? i18n("Pause") : i18n("Play");
+    if (m_play->accessibleName() != playLabel) {
+        m_play->setIcon(stripIcon(playing ? QStringLiteral("animation_pause") : QStringLiteral("animation_play")));
+        m_play->setToolTip(playLabel);
+        m_play->setAccessibleName(playLabel);
+    }
     m_play->setEnabled(available);
-    m_frameNumber->setText(available ? i18n("Frame %1", frame) : QString());
-    m_frameRate->setText(available ? i18n("%1 fps", image->animationInterface()->framerate()) : QString());
     m_timeline->setEnabled(available);
     if (available) {
         const QModelIndex index = m_frames->index(frame);
@@ -451,11 +562,22 @@ void KisTouchStudioAnimation::refreshCurrentFrame()
 
     const KisNodeSP node = m_viewManager->activeNode();
     const bool editable = available && !playing && canEditFrames(node);
-    KisKeyframeChannel *channel = editable ? rasterChannel(node) : nullptr;
+    KisKeyframeChannel *channel = available ? rasterChannel(node) : nullptr;
+    m_previous->setEnabled(channel && frame > channel->firstKeyframeTime());
+    m_next->setEnabled(channel && frame < channel->lastKeyframeTime());
+    m_track->setEnabled(available);
+    updateTrackLabel();
+    const QVariant onion = node ? KisLayerPropertiesIcons::nodeProperty(node, KisLayerPropertiesIcons::onionSkins, QVariant()) : QVariant();
+    m_onion->setEnabled(available && !playing && onion.isValid());
+    m_onion->setChecked(onion.toBool());
     m_add->setEnabled(editable);
-    m_options->setEnabled(editable);
+    m_options->setEnabled(available);
+    m_playbackSettings->setEnabled(available && !playing);
+    if (available) {
+        m_playbackSettings->setText(i18n("Playback Settings · %1 fps…", image->animationInterface()->framerate()));
+    }
     m_duplicate->setEnabled(editable);
-    m_remove->setEnabled(channel && channel->keyframeAt(frame));
+    m_remove->setEnabled(editable && channel && channel->keyframeAt(frame));
 }
 
 void KisTouchStudioAnimation::seek(int frame, bool finalize)
@@ -492,7 +614,10 @@ void KisTouchStudioAnimation::editFrame(FrameEdit edit)
     const auto description = edit == FrameEdit::Remove ? kundo2_i18n("Remove Keyframe")
         : edit == FrameEdit::Duplicate ? kundo2_i18n("Duplicate Keyframe")
         : kundo2_i18n("Add Keyframe");
-    auto *command = new KisCommandUtils::LambdaCommand(description, [node, edit, source, target]() mutable -> KUndo2Command * {
+    auto *command = new KisCommandUtils::LambdaCommand(description, [node, edit, source, target, owner = image.data()]() mutable -> KUndo2Command * {
+        if (node->graphListener() != owner || !canEditFrames(node)) {
+            return nullptr;
+        }
         KisKeyframeChannel *channel = rasterChannel(node);
         auto command = std::make_unique<KUndo2Command>();
         if (edit == FrameEdit::Remove) {
@@ -529,4 +654,125 @@ void KisTouchStudioAnimation::editFrame(FrameEdit edit)
     if (edit != FrameEdit::Remove && target != source) {
         seek(target);
     }
+}
+
+void KisTouchStudioAnimation::resizeEvent(QResizeEvent *event)
+{
+    QFrame::resizeEvent(event);
+    m_add->setToolButtonStyle(width() < 460 ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+    updateTrackLabel();
+}
+
+void KisTouchStudioAnimation::updateTrackLabel()
+{
+    const KisNodeSP node = m_viewManager->activeNode();
+    const QString fullName = node ? node->name() : i18n("Layers");
+    const int labelWidth = qBound(0, width() - (width() < 460 ? 300 : 360), 160);
+    m_track->setToolButtonStyle(labelWidth >= 25 ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
+    m_track->setText(m_track->fontMetrics().elidedText(fullName, Qt::ElideRight, labelWidth));
+    m_track->setToolTip(i18n("Active animation layer: %1", fullName));
+}
+
+void KisTouchStudioAnimation::populateTracks()
+{
+    m_tracks->clear();
+    const KisImageSP image = m_viewManager->image();
+    if (!image) {
+        return;
+    }
+    const KisNodeSP active = m_viewManager->activeNode();
+    const auto addTracks = [this, &active](auto &&self, const KisNodeSP &parent, int depth) -> void {
+        for (KisNodeSP node = parent->lastChild(); node; node = node->prevSibling()) {
+            if (supportsRasterFrames(node) || rasterChannel(node)) {
+                const QString name = QString(qMin(depth, 6) * 2, QLatin1Char(' ')) + node->name();
+                QAction *select = m_tracks->addAction(name);
+                select->setCheckable(true);
+                select->setChecked(node == active);
+                connect(select, &QAction::triggered, this, [this, track = KisNodeWSP(node)] {
+                    const KisNodeSP target = track.toStrongRef();
+                    const KisImageSP currentImage = m_viewManager->image();
+                    if (target && currentImage && target->graphListener() == currentImage.data()) {
+                        auto *manager = m_viewManager->nodeManager();
+                        manager->slotNonUiActivatedNode(target);
+                        manager->slotSetSelectedNodes(KisNodeList {target});
+                    }
+                });
+            }
+            self(self, node, depth + 1);
+        }
+    };
+    addTracks(addTracks, image->root(), 0);
+    if (m_tracks->isEmpty()) {
+        m_tracks->addAction(i18n("No animation layers"))->setEnabled(false);
+    }
+}
+
+void KisTouchStudioAnimation::toggleOnionSkin()
+{
+    const KisImageSP image = m_viewManager->image();
+    const KisNodeSP node = m_viewManager->activeNode();
+    if (image && node) {
+        KisLayerPropertiesIcons::setNodePropertyAutoUndo(node, KisLayerPropertiesIcons::onionSkins,
+                                                        m_onion->isChecked(), image);
+    }
+}
+
+void KisTouchStudioAnimation::editPlaybackSettings()
+{
+    const KisImageSP image = m_viewManager->image();
+    if (!image) {
+        return;
+    }
+    KisImageAnimationInterface *animation = image->animationInterface();
+    const KisTimeSpan range = animation->documentPlaybackRange();
+    auto *dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(i18n("Playback Settings"));
+    auto *layout = new QFormLayout(dialog);
+
+    auto *fps = new QSpinBox(dialog);
+    fps->setRange(1, qMax(240, animation->framerate()));
+    fps->setValue(animation->framerate());
+    auto *start = new QSpinBox(dialog);
+    auto *end = new QSpinBox(dialog);
+    const int lastFrame = qMax(range.end(), 9999);
+    start->setRange(0, lastFrame);
+    end->setRange(0, lastFrame);
+    start->setValue(range.start());
+    end->setValue(range.end());
+    for (auto *field : {fps, start, end}) {
+        field->setMinimumHeight(36);
+    }
+
+    layout->addRow(i18n("Frames per second"), fps);
+    layout->addRow(i18n("Start frame"), start);
+    layout->addRow(i18n("End frame"), end);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    layout->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    connect(start, qOverload<int>(&QSpinBox::valueChanged), end, [end](int value) {
+        if (end->value() < value) {
+            end->setValue(value);
+        }
+    });
+    connect(end, qOverload<int>(&QSpinBox::valueChanged), start, [start](int value) {
+        if (start->value() > value) {
+            start->setValue(value);
+        }
+    });
+    connect(dialog, &QDialog::accepted, this, [this, source = KisImageWSP(image), fps, start, end] {
+        const KisImageSP image = source.toStrongRef();
+        if (!image || image != m_viewManager->image().toStrongRef()) {
+            return;
+        }
+        const KisImageAnimSettingCommand::Settings settings {fps->value(), start->value(), end->value()};
+        KisImageAnimationInterface *animation = image->animationInterface();
+        const KisTimeSpan range = animation->documentPlaybackRange();
+        if (settings.FPS != animation->framerate() || settings.startFrame != range.start() || settings.endFrame != range.end()) {
+            KisProcessingApplicator::runSingleCommandStroke(image, new KisImageAnimSettingCommand(animation, settings),
+                                                            KisStrokeJobData::BARRIER, KisStrokeJobData::EXCLUSIVE);
+        }
+    });
+    dialog->open();
 }

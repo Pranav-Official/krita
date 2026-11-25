@@ -468,6 +468,8 @@ set(kritaui_LIB_SRCS
 
     kis_mainwindow_observer.cpp
     KisTouchStudio.cpp
+    KisTouchStudioContext.cpp
+    KisTouchStudioDockers.cpp
     KisTouchStudioPanels.cpp
     KisTouchStudioAnimation.cpp
     KisViewManager.cpp
